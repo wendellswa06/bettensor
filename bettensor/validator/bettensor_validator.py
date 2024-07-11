@@ -19,6 +19,7 @@ import time
 from dotenv import load_dotenv
 import os
 import math
+import numpy as np
 
 # Get the current file's directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -896,7 +897,7 @@ class BettensorValidator(BaseNeuron):
 
         bt.logging.info("Recent games and predictions update process completed")
 
-    def logarithmic_penalty(count, min_count):
+    def logarithmic_penalty(self, count, min_count):
         # Used to penalize miners under a given threshold of predictions to not reward dumb luck
         if count >= min_count:
             return 1.0
@@ -966,7 +967,7 @@ class BettensorValidator(BaseNeuron):
             if team_game_id in game_date_map:
                 event_date = game_date_map[team_game_id]
                 age_days = (now - event_date).days
-                
+                age_days = max(age_days, 0) 
                 # Use precomputed decay factor
                 decay_factor = self.decay_factors[min(age_days, 365)]
 
@@ -1030,7 +1031,7 @@ class BettensorValidator(BaseNeuron):
         # Check stake and set weights
         uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         stake = float(self.metagraph.S[uid])
-        if stake < 1000.0:
+        if stake < 0.0:
             bt.logging.error("Insufficient stake. Failed in setting weights.")
         else:
             result = self.subtensor.set_weights(
