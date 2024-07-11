@@ -18,6 +18,7 @@ import requests
 import time
 from dotenv import load_dotenv
 import os
+import math
 
 # Get the current file's directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +67,7 @@ class BettensorValidator(BaseNeuron):
         self.load_validator_state = None
         self.data_entry = None
         self.uid = None
+        self.decay_factors = self.compute_decay_factors()
 
         load_dotenv()  # take environment variables from .env.
         self.rapid_api_key = os.getenv("RAPID_API_KEY")
@@ -894,90 +896,128 @@ class BettensorValidator(BaseNeuron):
 
         bt.logging.info("Recent games and predictions update process completed")
 
-    def calculate_miner_scores(self):
-        """Calculates the scores for miners based on their performance in the last 48 hours"""
-        # initialize the earnings tensor
-        earnings = torch.zeros_like(self.metagraph.S, dtype=torch.float32)
+    def logarithmic_penalty(count, min_count):
+        # Used to penalize miners under a given threshold of predictions to not reward dumb luck
+        if count >= min_count:
+            return 1.0
+        else:
+            return math.log10(count + 1) / math.log10(min_count)
 
-        # connect to the sqlite database
+    def compute_decay_factors(self):
+        decay_rate = 0.05
+        max_age_days = 365
+        return {
+            age: math.exp(-decay_rate * min(age, max_age_days))
+            for age in range(max_age_days + 1)
+        }
+    
+    @staticmethod
+    def exponential_decay_returns(scale: int) -> np.ndarray:
+        """
+        Rewards the top miners far more than the lower miners
+        """
+        top_miner_benefit = 0.90  # TOP_MINER_BENEFIT
+        top_miner_percent = 0.40  # TOP_MINER_PERCENT
+
+        top_miner_benefit = np.clip(top_miner_benefit, a_min=0, a_max=0.99999999)
+        top_miner_percent = np.clip(top_miner_percent, a_min=0.00000001, a_max=1)
+        scale = max(1, scale)
+        if scale == 1:
+            return np.array([1])
+
+        k = -np.log(1 - top_miner_benefit) / (top_miner_percent * scale)
+        xdecay = np.linspace(0, scale-1, scale)
+        decayed_returns = np.exp((-k) * xdecay)
+
+        # Normalize the decayed_returns so that they sum up to 1
+        return decayed_returns / np.sum(decayed_returns)
+
+    def calculate_miner_scores(self):
+        """Calculates the scores for miners based on their performance over the subnet's lifetime with exponential decay and severe logarithmic prediction count penalty"""
+        earnings = torch.zeros_like(self.metagraph.S, dtype=torch.float32)
+        
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # get the current timestamp
         now = datetime.now(timezone.utc)
 
-        # calculate the timestamp for 48 hours ago
-        forty_eight_hours_ago = now - timedelta(hours=48)
-
-        # fetch the relevant data from game_data for the last 48 hours
-        cursor.execute(
-            "SELECT externalId, eventStartDate FROM game_data WHERE eventStartDate BETWEEN ? AND ?",
-            (forty_eight_hours_ago.isoformat(), now.isoformat()),
-        )
+        # Fetch all game data
+        cursor.execute("SELECT externalId, eventStartDate FROM game_data")
         game_data_rows = cursor.fetchall()
+        game_date_map = {row[0]: datetime.fromisoformat(row[1]) for row in game_data_rows}
 
-        # create a mapping from teamGameID to eventStartDate
-        game_date_map = {row[0]: row[1] for row in game_data_rows}
-
-        # fetch all the relevant data from predictions
+        # Fetch all predictions
         cursor.execute(
             "SELECT predictionID, teamGameID, minerId, predictedOutcome, outcome, teamA, teamB, wager, teamAodds, teamBodds, tieOdds FROM predictions"
         )
         prediction_rows = cursor.fetchall()
 
-        # close the database connection
         conn.close()
 
-        # process the data
         miner_performance = {}
-        miner_id_to_index = {
-            miner_id: idx for idx, miner_id in enumerate(self.metagraph.hotkeys)
-        }
+        miner_prediction_counts = {}
+        miner_id_to_index = {miner_id: idx for idx, miner_id in enumerate(self.metagraph.hotkeys)}
+
+        min_prediction_count = 100
 
         for row in prediction_rows:
-            (
-                prediction_id,
-                team_game_id,
-                miner_id,
-                predicted_outcome,
-                outcome,
-                team_a,
-                team_b,
-                wager,
-                team_a_odds,
-                team_b_odds,
-                tie_odds,
-            ) = row
+            (prediction_id, team_game_id, miner_id, predicted_outcome, outcome, team_a, team_b, wager, team_a_odds, team_b_odds, tie_odds) = row
 
             if team_game_id in game_date_map:
-                event_date = datetime.fromisoformat(game_date_map[team_game_id])
-                if event_date >= forty_eight_hours_ago:
-                    if miner_id not in miner_performance:
-                        miner_performance[miner_id] = 0.0
+                event_date = game_date_map[team_game_id]
+                age_days = (now - event_date).days
+                
+                # Use precomputed decay factor
+                decay_factor = self.decay_factors[min(age_days, 365)]
 
-                    if predicted_outcome == outcome:
-                        if predicted_outcome == "0":
-                            earned = wager * team_a_odds
-                        elif predicted_outcome == "1":
-                            earned = wager * team_b_odds
-                        elif predicted_outcome == "Tie":
-                            earned = wager * tie_odds
-                        else:
-                            bt.logging.warning(
-                                f"outcome for {team_game_id} not found. Please notify Bettensor Developers, as this is likely a larger API issue."
-                            )
-                        miner_performance[miner_id] += earned
+                if miner_id not in miner_performance:
+                    miner_performance[miner_id] = 0.0
+                    miner_prediction_counts[miner_id] = 0
 
-        # update the earnings tensor
+                miner_prediction_counts[miner_id] += 1
+
+                if predicted_outcome == outcome:
+                    if predicted_outcome == "0":
+                        earned = wager * team_a_odds
+                    elif predicted_outcome == "1":
+                        earned = wager * team_b_odds
+                    elif predicted_outcome == "Tie":
+                        earned = wager * tie_odds
+                    else:
+                        bt.logging.warning(f"outcome for {team_game_id} not found. Please notify Bettensor Developers, as this is likely a larger API issue.")
+                        continue
+
+                    # Apply decay factor to the earned amount
+                    miner_performance[miner_id] += earned * decay_factor
+
+        # Apply logarithmic penalty for miners with less than min_prediction_count predictions
         for miner_id, total_earned in miner_performance.items():
+            prediction_count = miner_prediction_counts[miner_id]
+            penalty_factor = self.logarithmic_penalty(prediction_count, min_prediction_count)
+            miner_performance[miner_id] *= penalty_factor
+
+        # Sort miners by performance
+        sorted_miners = sorted(miner_performance.items(), key=lambda x: x[1], reverse=True)
+        
+        # Calculate decay factors
+        decay_factors = self.exponential_decay_returns(len(sorted_miners))
+        
+        # Apply decay factors to scores
+        final_scores = {}
+        for (miner_id, score), decay_factor in zip(sorted_miners, decay_factors):
+            final_scores[miner_id] = score * decay_factor
+
+        # Update the earnings tensor
+        for miner_id, final_score in final_scores.items():
             if miner_id in miner_id_to_index:
                 idx = miner_id_to_index[miner_id]
-                earnings[idx] = total_earned
+                earnings[idx] = final_score
 
-        bt.logging.trace("Miner performance calculated")
-        bt.logging.trace(miner_performance)
+        bt.logging.trace("Miner performance calculated with lifetime lookback, exponential decay, logarithmic prediction count penalty, and Taoshi-style distribution")
+        bt.logging.trace(final_scores)
 
         return earnings
+
 
     def set_weights(self):
         """Sets the weights for the miners based on their calculated scores"""
