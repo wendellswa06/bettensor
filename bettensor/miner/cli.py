@@ -574,7 +574,7 @@ class PredictionsList(InteractiveTable):
             - Initializes pagination
         """
         super().__init__(app)
-        app.reload_miner_stats()  # Reload stats when initializing PredictionsList
+        app.reload_miner_stats()
         app.reload_data()
         self.message = ""
         self.predictions_per_page = 25
@@ -596,7 +596,7 @@ class PredictionsList(InteractiveTable):
             self.app.predictions.values(),
             key=lambda x: datetime.datetime.fromisoformat(x["predictionDate"]),
             reverse=True
-        )
+        ) if self.app.predictions else []
 
     def update_total_pages(self):
         """
@@ -617,6 +617,11 @@ class PredictionsList(InteractiveTable):
             - Calculates dynamic column widths based on data
             - Formats predictions data with proper alignment and separators
         """
+        if not self.sorted_predictions:
+            self.options = ["No predictions available", "Go Back"]
+            self.header = "No predictions available"
+            return
+
         start_idx = self.current_page * self.predictions_per_page
         end_idx = min(start_idx + self.predictions_per_page, len(self.sorted_predictions))
         
@@ -631,7 +636,7 @@ class PredictionsList(InteractiveTable):
         max_tieOdds_len = max(len("Tie Odds"), max(len(self.format_odds(pred["tieOdds"])) for pred in self.sorted_predictions))
         max_outcome_len = max(len("Outcome"), max(len(self.format_outcome(pred["outcome"])) for pred in self.sorted_predictions))
 
-        # Define the header with calculated widths, adding a space at the beginning for cursor alignment
+        # Define the header with calculated widths
         self.header = (
             f"  {'Prediction Date':<{max_date_len}} | "
             f"{'Predicted Outcome':<{max_prediction_len}} | "
@@ -668,16 +673,17 @@ class PredictionsList(InteractiveTable):
             - Formats the header, options, and pagination information
             - Updates the text area content
         """
-        self.app.reload_miner_stats()  # Reload stats before updating text area
+        self.app.reload_miner_stats()
         header_text = self.header
+        if not self.sorted_predictions:
+            self.text_area.text = f"{header_text}\n\n> Go Back"
+            return
+
         divider = "-" * len(header_text)
-        if len(self.options) <= 1:  # Only "Go Back" is present
-            options_text = "No predictions available."
-        else:
-            options_text = "\n".join(
-                f"{'>' if i == self.selected_index else ' '} {option}"
-                for i, option in enumerate(self.options)
-            )
+        options_text = "\n".join(
+            f"{'>' if i == self.selected_index else ' '} {option}"
+            for i, option in enumerate(self.options)
+        )
         page_info = f"\nPage {self.current_page + 1}/{self.total_pages} (Use left/right arrow keys to navigate)"
         self.text_area.text = f"{header_text}\n{divider}\n{options_text}{page_info}\n\n{self.message}"
 
