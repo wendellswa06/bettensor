@@ -134,12 +134,12 @@ class Application:
 
         @kb.add('left')
         def _(event):
-            if hasattr(self, 'current_view') and isinstance(self.current_view, GamesList):
+            if isinstance(self.current_view, (PredictionsList, GamesList)):
                 self.current_view.move_left()
 
         @kb.add('right')
         def _(event):
-            if hasattr(self, 'current_view') and isinstance(self.current_view, GamesList):
+            if isinstance(self.current_view, (PredictionsList, GamesList)):
                 self.current_view.move_right()
 
         return kb
@@ -730,7 +730,7 @@ class PredictionsList(InteractiveTable):
         if self.current_page > 0:
             self.current_page -= 1
             self.update_options()
-            self.selected_index = len(self.options) - 1  # Keep cursor on "Go Back"
+            self.selected_index = min(self.selected_index, len(self.options) - 1)
             self.update_text_area()
 
     def move_right(self):
@@ -744,7 +744,7 @@ class PredictionsList(InteractiveTable):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
             self.update_options()
-            self.selected_index = len(self.options) - 1  # Keep cursor on "Go Back"
+            self.selected_index = min(self.selected_index, len(self.options) - 1)
             self.update_text_area()
 
     def format_odds(self, value):
