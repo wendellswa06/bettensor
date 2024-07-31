@@ -262,7 +262,6 @@ class MinerStateManager:
         try:
             self.save_state()
             self.stats_handler.recalculate_stats()
-            self.predictions_handler.fix_existing_prediction_outcomes()
         except Exception as e:
             bt.logging.error(f"Error in periodic_db_update: {e}")
             bt.logging.error(traceback.format_exc())

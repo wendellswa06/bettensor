@@ -133,6 +133,9 @@ class BettensorMiner(BaseNeuron):
             # Periodic database update
             self.state_manager.periodic_db_update()
 
+            # Add this line to fix existing prediction outcomes
+            self.predictions_handler.fix_existing_prediction_outcomes()
+
             synapse.prediction_dict = new_prediction_dict
             synapse.gamedata_dict = None
             synapse.metadata = Metadata.create(
@@ -295,4 +298,3 @@ class BettensorMiner(BaseNeuron):
         else:
             # If it's not time to update, return the last known incentive from the state manager
             return self.state_manager.get_current_incentive()
-
