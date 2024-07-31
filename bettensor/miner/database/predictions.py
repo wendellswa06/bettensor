@@ -112,8 +112,8 @@ class PredictionsHandler:
                    (outcome == 2 and prediction.predictedOutcome == "Tie"):
                     result = 'Wager Won'
                     earnings = prediction.wager * (prediction.teamAodds if outcome == 0 else 
-                                               prediction.teamBodds if outcome == 1 else 
-                                               prediction.tieOdds)
+                                                   prediction.teamBodds if outcome == 1 else 
+                                                   prediction.tieOdds)
                 else:
                     result = 'Wager Lost'
                     earnings = 0
@@ -359,21 +359,21 @@ class PredictionsHandler:
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("""
-                    SELECT p.predictionID, p.teamGameID, p.outcome as prediction_outcome, g.outcome as game_outcome
+                    SELECT p.predictionID, p.teamGameID, p.predictedOutcome, g.outcome as game_outcome
                     FROM predictions p
                     JOIN games g ON p.teamGameID = g.externalID
-                    WHERE p.outcome != 'Unfinished' AND g.outcome = 'Unfinished'
+                    WHERE g.outcome != 'Unfinished'
                 """)
-                incorrect_predictions = cursor.fetchall()
+                predictions = cursor.fetchall()
 
-                for pred_id, game_id, pred_outcome, game_outcome in incorrect_predictions:
-                    bt.logging.info(f"Fixing prediction {pred_id} for game {game_id}: Resetting outcome from {pred_outcome} to Unfinished")
+                for pred_id, game_id, predicted_outcome, game_outcome in predictions:
+                    new_outcome = self.outcome_handler.convert_outcome(game_outcome, predicted_outcome)
                     cursor.execute("""
                         UPDATE predictions
-                        SET outcome = 'Unfinished'
+                        SET outcome = ?
                         WHERE predictionID = ?
-                    """, (pred_id,))
+                    """, (new_outcome, pred_id))
 
-            bt.logging.info(f"Fixed {len(incorrect_predictions)} incorrect prediction outcomes")
+                bt.logging.info(f"Updated {len(predictions)} prediction outcomes")
         except Exception as e:
             bt.logging.error(f"Error fixing existing prediction outcomes: {e}")
