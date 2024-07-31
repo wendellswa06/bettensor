@@ -104,33 +104,24 @@ class PredictionsHandler:
             bt.logging.error(f"Error updating prediction outcomes for game {game_data.externalId}: {e}")
 
     def _update_prediction_outcome(self, prediction: TeamGamePrediction, game_data: TeamGame):
-        """
-        Update the outcome of an existing prediction based on game data.
-
-        Args:
-            prediction (TeamGamePrediction): The prediction to update.
-            game_data (TeamGame): The updated game data.
-
-        Behavior:
-            - Updates the prediction outcome based on the game outcome.
-            - Updates the miner's state based on the prediction result.
-        """
         try:
             outcome = game_data.outcome
             if outcome != "Unfinished":
                 if (outcome == 0 and prediction.predictedOutcome == prediction.teamA) or \
                    (outcome == 1 and prediction.predictedOutcome == prediction.teamB) or \
                    (outcome == 2 and prediction.predictedOutcome == "Tie"):
-                    result = 'win'
+                    result = 'Wager Won'
                     earnings = prediction.wager * (prediction.teamAodds if outcome == 0 else 
-                                                   prediction.teamBodds if outcome == 1 else 
-                                                   prediction.tieOdds)
+                                               prediction.teamBodds if outcome == 1 else 
+                                               prediction.tieOdds)
                 else:
-                    result = 'loss'
+                    result = 'Wager Lost'
                     earnings = 0
 
+                # Update the state manager
                 self.state_manager.update_on_game_result({'outcome': result, 'earnings': earnings})
 
+                # Update the database
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
                         "UPDATE predictions SET outcome = ? WHERE predictionID = ?",
