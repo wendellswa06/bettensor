@@ -27,7 +27,6 @@ class WeightSetter:
         cursor = conn.cursor()
         
         try:
-            # Create the table if it doesn't exist
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS daily_miner_stats (
                     date DATE,
@@ -40,10 +39,8 @@ class WeightSetter:
                 )
             """)
             
-            # Check if the table is empty
             cursor.execute("SELECT COUNT(*) FROM daily_miner_stats")
             if cursor.fetchone()[0] == 0:
-                # If empty, initialize with data from July 28, 2024 to yesterday
                 start_date = datetime(2024, 7, 28).date()
                 end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
                 current_date = start_date
@@ -141,20 +138,17 @@ class WeightSetter:
             conn.close()
 
     def recalculate_daily_profits(self):
-        """
-        This method is created for safety. If an exploit is found in the network,
-        the exploit can be patched, and profits recalculated. No predictions will be
-        excluded, but a standard attack vector would be a method of betting greater
-        than $1000; if that attack is patched, we can simply rerun past daily profit calculations.
-        """
         conn = self.connect_db()
         cursor = conn.cursor()
         
         try:
+            start_date = datetime(2024, 7, 28).date().isoformat()
+            
             cursor.execute("""
                 UPDATE daily_miner_stats
                 SET total_earnings = 0
-            """)
+                WHERE date >= ?
+            """, (start_date,))
             
             cursor.execute("""
                 WITH daily_wagers AS (
@@ -163,6 +157,7 @@ class WeightSetter:
                         minerId,
                         SUM(wager) as total_daily_wager
                     FROM predictions
+                    WHERE DATE(predictionDate) >= ?
                     GROUP BY DATE(predictionDate), minerId
                 ),
                 daily_earnings AS (
@@ -178,6 +173,7 @@ class WeightSetter:
                     FROM predictions p
                     JOIN daily_wagers dw ON p.minerId = dw.minerId AND DATE(p.predictionDate) = dw.date
                     WHERE p.outcome != 'Unfinished' AND p.wager > 0 AND dw.total_daily_wager <= 1000
+                        AND DATE(p.predictionDate) >= ?
                     GROUP BY DATE(p.predictionDate), p.minerId
                 )
                 UPDATE daily_miner_stats
@@ -185,10 +181,11 @@ class WeightSetter:
                 FROM daily_earnings
                 WHERE daily_miner_stats.date = daily_earnings.date
                 AND daily_miner_stats.minerId = daily_earnings.minerId
-            """)
+                AND daily_miner_stats.date >= ?
+            """, (start_date, start_date, start_date))
             
             conn.commit()
-            bt.logging.info("Successfully recalculated all daily profits")
+            bt.logging.info(f"Successfully recalculated daily profits from {start_date} to now")
         except Exception as e:
             bt.logging.error(f"Error recalculating daily profits: {e}")
             conn.rollback()
@@ -416,10 +413,13 @@ class WeightSetter:
                 bt.logging.info("No predictions found in the database.")
                 return
 
+            # Ensure start_date is not earlier than July 28, 2024
+            start_date = max(datetime.strptime(start_date, '%Y-%m-%d').date(), datetime(2024, 7, 28).date())
+
             # Get yesterday's date
             end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
             
-            current_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            current_date = start_date
             
             while current_date <= end_date:
                 self.update_daily_stats(current_date)
