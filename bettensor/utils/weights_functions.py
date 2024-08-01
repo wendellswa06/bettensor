@@ -93,10 +93,17 @@ class WeightSetter:
         cursor = conn.cursor()
         
         try:
-            # Only process data from July 28, 2024 onwards and not for the current day
             today = datetime.now(timezone.utc).date()
             if date >= datetime(2024, 7, 28).date() and date < today:
                 cursor.execute("""
+                    WITH daily_wagers AS (
+                        SELECT 
+                            minerId,
+                            SUM(wager) as total_daily_wager
+                        FROM predictions
+                        WHERE DATE(predictionDate) = ?
+                        GROUP BY minerId
+                    )
                     INSERT INTO daily_miner_stats (date, minerId, total_predictions, correct_predictions, total_wager, total_earnings)
                     SELECT 
                         DATE(p.predictionDate) as date,
@@ -105,20 +112,21 @@ class WeightSetter:
                         SUM(CASE WHEN p.predictedOutcome = p.outcome THEN 1 ELSE 0 END) as correct_predictions,
                         SUM(p.wager) as total_wager,
                         SUM(CASE 
-                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '0' THEN p.wager * p.teamAodds
-                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '1' THEN p.wager * p.teamBodds
-                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '2' THEN p.wager * p.tieOdds
+                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '0' AND p.wager > 0 THEN p.wager * p.teamAodds
+                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '1' AND p.wager > 0 THEN p.wager * p.teamBodds
+                            WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '2' AND p.wager > 0 THEN p.wager * p.tieOdds
                             ELSE 0
                         END) as total_earnings
                     FROM predictions p
-                    WHERE DATE(p.predictionDate) = ?
+                    JOIN daily_wagers dw ON p.minerId = dw.minerId
+                    WHERE DATE(p.predictionDate) = ? AND dw.total_daily_wager <= 1000
                     GROUP BY DATE(p.predictionDate), p.minerId
                     ON CONFLICT(date, minerId) DO UPDATE SET
                         total_predictions = excluded.total_predictions,
                         correct_predictions = excluded.correct_predictions,
                         total_wager = excluded.total_wager,
                         total_earnings = excluded.total_earnings
-                """, (date.isoformat(),))
+                """, (date.isoformat(), date.isoformat()))
                 
                 conn.commit()
                 bt.logging.debug(f"Updated daily stats for {date.isoformat()}")
@@ -133,52 +141,59 @@ class WeightSetter:
             conn.close()
 
     def recalculate_daily_profits(self):
-        """
-        This method is created for safety. If an exploit is found in the network,
-        the exploit can be patched, and profits recalculated. No predictions will be
-        excluded, but a standard attack vector would be a method of betting greater
-        than $1000; if that attack is patched, we can simply rerun past daily profit calculations.
-        """
-        conn = self.connect_db()
-        cursor = conn.cursor()
+    """
+    This method is created for safety. If an exploit is found in the network,
+    the exploit can be patched, and profits recalculated. No predictions will be
+    excluded, but a standard attack vector would be a method of betting greater
+    than $1000; if that attack is patched, we can simply rerun past daily profit calculations.
+    """
+    conn = self.connect_db()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE daily_miner_stats
+            SET total_earnings = 0
+        """)
         
-        try:
-            # First, reset all earnings in the daily_miner_stats table
-            cursor.execute("""
-                UPDATE daily_miner_stats
-                SET total_earnings = 0
-            """)
-            
-            # Now, recalculate the earnings based on the predictions table
-            cursor.execute("""
-                WITH daily_earnings AS (
-                    SELECT 
-                        DATE(predictionDate) as date,
-                        minerId,
-                        SUM(CASE 
-                            WHEN predictedOutcome = outcome AND predictedOutcome = '0' AND wager > 0 THEN wager * teamAodds
-                            WHEN predictedOutcome = outcome AND predictedOutcome = '1' AND wager > 0 THEN wager * teamBodds
-                            WHEN predictedOutcome = outcome AND predictedOutcome = '2' AND wager > 0 THEN wager * tieOdds
-                            ELSE 0
-                        END) as recalculated_earnings
-                    FROM predictions
-                    WHERE outcome != 'Unfinished' AND wager > 0
-                    GROUP BY DATE(predictionDate), minerId
-                )
-                UPDATE daily_miner_stats
-                SET total_earnings = daily_earnings.recalculated_earnings
-                FROM daily_earnings
-                WHERE daily_miner_stats.date = daily_earnings.date
-                AND daily_miner_stats.minerId = daily_earnings.minerId
-            """)
-            
-            conn.commit()
-            bt.logging.info("Successfully recalculated all daily profits")
-        except Exception as e:
-            bt.logging.error(f"Error recalculating daily profits: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+        cursor.execute("""
+            WITH daily_wagers AS (
+                SELECT 
+                    DATE(predictionDate) as date,
+                    minerId,
+                    SUM(wager) as total_daily_wager
+                FROM predictions
+                GROUP BY DATE(predictionDate), minerId
+            ),
+            daily_earnings AS (
+                SELECT 
+                    DATE(p.predictionDate) as date,
+                    p.minerId,
+                    SUM(CASE 
+                        WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '0' AND p.wager > 0 THEN p.wager * p.teamAodds
+                        WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '1' AND p.wager > 0 THEN p.wager * p.teamBodds
+                        WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '2' AND p.wager > 0 THEN p.wager * p.tieOdds
+                        ELSE 0
+                    END) as recalculated_earnings
+                FROM predictions p
+                JOIN daily_wagers dw ON p.minerId = dw.minerId AND DATE(p.predictionDate) = dw.date
+                WHERE p.outcome != 'Unfinished' AND p.wager > 0 AND dw.total_daily_wager <= 1000
+                GROUP BY DATE(p.predictionDate), p.minerId
+            )
+            UPDATE daily_miner_stats
+            SET total_earnings = daily_earnings.recalculated_earnings
+            FROM daily_earnings
+            WHERE daily_miner_stats.date = daily_earnings.date
+            AND daily_miner_stats.minerId = daily_earnings.minerId
+        """)
+        
+        conn.commit()
+        bt.logging.info("Successfully recalculated all daily profits")
+    except Exception as e:
+        bt.logging.error(f"Error recalculating daily profits: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
     def logarithmic_penalty(self, count, min_count):
         if count >= min_count:
@@ -285,19 +300,26 @@ class WeightSetter:
         today = datetime.now(timezone.utc).date().isoformat()
         
         cursor.execute("""
-            SELECT minerId, COUNT(*) as total_predictions,
-                SUM(CASE WHEN predictedOutcome = outcome THEN 1 ELSE 0 END) as correct_predictions,
-                SUM(wager) as total_wager,
+            WITH daily_wagers AS (
+                SELECT minerId, SUM(wager) as total_daily_wager
+                FROM predictions
+                WHERE DATE(predictionDate) = ?
+                GROUP BY minerId
+            )
+            SELECT p.minerId, COUNT(*) as total_predictions,
+                SUM(CASE WHEN p.predictedOutcome = p.outcome THEN 1 ELSE 0 END) as correct_predictions,
+                SUM(p.wager) as total_wager,
                 SUM(CASE 
-                    WHEN predictedOutcome = outcome AND predictedOutcome = '0' THEN wager * teamAodds
-                    WHEN predictedOutcome = outcome AND predictedOutcome = '1' THEN wager * teamBodds
-                    WHEN predictedOutcome = outcome AND predictedOutcome = '2' THEN wager * tieOdds
+                    WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '0' AND p.wager > 0 THEN p.wager * p.teamAodds
+                    WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '1' AND p.wager > 0 THEN p.wager * p.teamBodds
+                    WHEN p.predictedOutcome = p.outcome AND p.predictedOutcome = '2' AND p.wager > 0 THEN p.wager * p.tieOdds
                     ELSE 0
                 END) as total_earnings
-            FROM predictions
-            WHERE DATE(predictionDate) = ? AND outcome != 'Unfinished'
-            GROUP BY minerId
-        """, (today,))
+            FROM predictions p
+            JOIN daily_wagers dw ON p.minerId = dw.minerId
+            WHERE DATE(p.predictionDate) = ? AND p.outcome != 'Unfinished' AND dw.total_daily_wager <= 1000
+            GROUP BY p.minerId
+        """, (today, today))
         
         return cursor.fetchall()
 
