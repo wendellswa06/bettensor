@@ -869,7 +869,6 @@ class BettensorValidator(BaseNeuron):
                 return
 
             game_response = game_data.get("response", [])[0]
-            bt.logging.info(f"Full baseball game response: {game_response}")
 
             status = game_response.get("status", {}).get("long")
             if status != "Finished":
