@@ -862,8 +862,15 @@ class BettensorValidator(BaseNeuron):
 
         game_response = game_data.get("response", [])[0]
 
-        if sport == "baseball":
+                if sport == "baseball":
+            game_data = self.api_client.get_baseball_game(str(externalId))
+            if not game_data:
+                bt.logging.error(f"Failed to fetch baseball game data for {externalId}")
+                return
+
+            game_response = game_data.get("response", [])[0]
             bt.logging.info(f"Full baseball game response: {game_response}")
+
             status = game_response.get("status", {}).get("long")
             bt.logging.info(f"Baseball game {externalId} status: {status}")
             if status != "Finished":
@@ -877,6 +884,18 @@ class BettensorValidator(BaseNeuron):
             if home_score is None or away_score is None:
                 bt.logging.error(f"Unable to extract scores for baseball game {externalId}")
                 return
+
+            if home_score > away_score:
+                numeric_outcome = 0
+            elif away_score > home_score:
+                numeric_outcome = 1
+            else:
+                numeric_outcome = 2
+
+            bt.logging.info(f"Game {externalId} result: {teamA} {home_score} - {away_score} {teamB}")
+            bt.logging.info(f"Numeric outcome: {numeric_outcome}")
+
+            self.update_game_outcome(externalId, numeric_outcome)
 
         elif sport == "soccer":
             status = game_response["fixture"]["status"]["long"]
