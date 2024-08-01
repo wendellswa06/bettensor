@@ -863,12 +863,27 @@ class BettensorValidator(BaseNeuron):
 
         if sport == "baseball":
             status = game_response["status"]["long"]
+            bt.logging.info(f"Baseball game {externalId} status: {status}")
             if status != "Finished":
-                bt.logging.trace(f"Game {externalId} is not finished yet. Current status: {status}")
+                bt.logging.info(f"Baseball game {externalId} is not finished yet. Current status: {status}")
                 return
 
             home_score = game_response["scores"]["home"]["total"]
             away_score = game_response["scores"]["away"]["total"]
+            bt.logging.info(f"Baseball game {externalId} scores - Home: {home_score}, Away: {away_score}")
+
+            if home_score > away_score:
+                numeric_outcome = 0
+            elif away_score > home_score:
+                numeric_outcome = 1
+            else:
+                numeric_outcome = 2
+
+            bt.logging.info(f"Game {externalId} result: {teamA} {home_score} - {away_score} {teamB}")
+            bt.logging.info(f"Numeric outcome: {numeric_outcome}")
+
+            self.update_game_outcome(externalId, numeric_outcome)
+            
         elif sport == "soccer":
             status = game_response["fixture"]["status"]["long"]
             if status not in ["Match Finished", "Match Finished After Extra Time", "Match Finished After Penalties"]:
