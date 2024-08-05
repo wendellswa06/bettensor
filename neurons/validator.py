@@ -65,12 +65,22 @@ async def main(validator: BettensorValidator):
             {"id": "140", "season": "2024"},  # La Liga
             {"id": "78", "season": "2024"},   # Bundesliga
             {"id": "262", "season": "2024"},  # Liga MX
-            {"id": "4", "season": "2024"},     # Euro Cup
+            {"id": "4", "season": "2024"},    # Euro Cup
             {"id": "9", "season": "2024"},    # Copa America
-            {"id": "71", "season": "2024"},  # Brasileirão Série A
-            {"id": "98", "season": "2024"}, # J1 League
-            {"id": "480", "season": "2024"}, # Olympics mens
-            {"id": "524", "season": "2024"} # Olympics womens
+            {"id": "71", "season": "2024"},   # Brasileirão Série A
+            {"id": "98", "season": "2024"},   # J1 League
+            {"id": "480", "season": "2024"},  # Olympics mens
+            {"id": "524", "season": "2024"},  # Olympics womens
+            {"id": "39", "season": "2024"},   # Premier League
+            {"id": "135", "season": "2024"},  # Italian Serie A
+            {"id": "61", "season": "2024"},   # French Ligue 1
+            {"id": "88", "season": "2024"},   # Dutch Eredivisie (First Division)
+            {"id": "94", "season": "2024"},   # Portuguese Primeira Liga (First Division)
+            {"id": "144", "season": "2024"},  # Belgian Pro League (First League)
+            {"id": "203", "season": "2024"},  # Turkish Super Lig
+            {"id": "345", "season": "2024"},  # Czech First League
+            {"id": "179", "season": "2024"},  # Scottish Premiership
+            {"id": "207", "season": "2024"},  # Swiss Super League
         ]
     }
 
